@@ -6,9 +6,9 @@ on:
       - main
       - dev
 
-#env:
+env:
  # AWS_REGION: us-east-1     
-  #ECR_REGISTRY: 777133917064.dkr.ecr.us-east-1.amazonaws.com            # set this to your preferred AWS region, e.g. us-west-1
+  ECR_REGISTRY: 777133917064.dkr.ecr.us-east-1.amazonaws.com            # set this to your preferred AWS region, e.g. us-west-1
  # ECR_REPOSITORY: django-app           # set this to your Amazon ECR repository name
  # ECS_SERVICE: django-svc               # set this to your Amazon ECS service name
   #ECS_CLUSTER: RnD                 # set this to your Amazon ECS cluster name
@@ -46,7 +46,7 @@ jobs:
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
-      run: |
+      run:
         # Build a docker container and
         # push it to ECR so that it can
         # be deployed to ECS.
