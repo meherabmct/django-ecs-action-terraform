@@ -17,7 +17,7 @@ env:
                                                # containerDefinitions section of your task definition
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-and-push:
@@ -44,15 +44,15 @@ jobs:
       id: build-image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: production
+        IMAGE_TAG: ${{ github.sha}}
       run: |
         # Build a docker container and
         # push it to ECR so that it can
         # be deployed to ECS.
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f ./django/build-process/docker-backend-django/Dockerfile .
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+        echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
   deploy:
     name: Deploy
@@ -67,13 +67,23 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
-  
-      - name: Deploy Amazon ECS task definition
+
+
+      
+
+      - name: Update Task Definition with New Image
         id: deploy
         run: |
           # Update ECS Service with the new task definition
-          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition $NEW_TASK_DEFINITION --force-new-deployment
-  
+          NEW_TASK_DEF=$(jq '.containerDefinitions[0].image = "${{ env.IMAGE_URI }}"' $TASK_DEFINITION)
+          echo "$NEW_TASK_DEF" > new-task-definition.json
+
+          TASK_REVISION=$(aws ecs register-task-definition --cli-input-json file://new-task-definition.json | jq -r '.taskDefinition.taskDefinitionArn')
+          echo "TASK_REVISION=$TASK_REVISION" >> $GITHUB_ENV
+
+      - name: Update ECS Service with New Task Definition
+        run: |
+            aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition ${{ env.TASK_REVISION }}
       - name: Wait for deployment to stabilize
         id: wait
         run: |
