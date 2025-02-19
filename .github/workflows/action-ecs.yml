@@ -63,7 +63,7 @@ jobs:
       - name: Update ECS Task Definition with New Image
         id: update-task-def
         run: |
-            jq '.containerDefinitions[0].image = env.IMAGE_URI' task-definition.json > task-def-updated.json
+            jq --arg IMAGE_URI "$IMAGE_URI" '.containerDefinitions[0].image = $IMAGE_URI' task-definition.json > task-def-updated.json
             aws ecs register-task-definition --cli-input-json file://task-def-updated.json > new-task-def.json
               
             TASK_REVISION=$(jq -r '.taskDefinition.taskDefinitionArn' new-task-def.json)
