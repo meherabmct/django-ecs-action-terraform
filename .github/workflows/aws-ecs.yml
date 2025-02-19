@@ -7,7 +7,7 @@ on:
       - dev
 
 env:
- # AWS_REGION: us-east-1     
+  AWS_REGION: us-east-1     
   ECR_REGISTRY: 777133917064.dkr.ecr.us-east-1.amazonaws.com            # set this to your preferred AWS region, e.g. us-west-1
   ECR_REPOSITORY: django-app           # set this to your Amazon ECR repository name
   ECS_SERVICE: django-svc               # set this to your Amazon ECS service name
@@ -67,7 +67,7 @@ jobs:
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
+        aws-region: ${{ env.AWS_REGION }}
 
     - name: Download Existing ECS Task Definition
       id: get-task-def
