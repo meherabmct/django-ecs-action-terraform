@@ -4,20 +4,21 @@ on:
   push:
     branches:
       - main
-      - uat
+      - dev
 
 env:
-  AWS_REGION: us-east-1                  # set this to your preferred AWS region, e.g. us-west-1
+  #AWS_REGION: us-east-1     
+  ECR_REGISTRY: 777133917064.dkr.ecr.us-east-1.amazonaws.com            # set this to your preferred AWS region, e.g. us-west-1
   ECR_REPOSITORY: django-app           # set this to your Amazon ECR repository name
-  ECS_SERVICE: django-svc               # set this to your Amazon ECS service name
-  ECS_CLUSTER: RnD                 # set this to your Amazon ECS cluster name
-  ECS_TASK_DEFINITION: djano-task # set this to the path to your Amazon ECS task definition
+  #ECS_SERVICE: django-svc               # set this to your Amazon ECS service name
+  #ECS_CLUSTER: RnD                 # set this to your Amazon ECS cluster name
+  #ECS_TASK_DEFINITION: djano-task # set this to the path to your Amazon ECS task definition
                                                # file, e.g. .aws/task-definition.json
-  CONTAINER_NAME: django-app          # set this to the name of the container in the
+  #CONTAINER_NAME: django-app          # set this to the name of the container in the
                                                # containerDefinitions section of your task definition
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-and-push:
@@ -34,7 +35,7 @@ jobs:
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+        aws-region: ${{ secrets.AWS_REGION }}
 
     - name: Login to Amazon ECR
       id: login-ecr
@@ -44,63 +45,50 @@ jobs:
       id: build-image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: production
-      run: |
+        IMAGE_TAG: dev
+      run:
         # Build a docker container and
-        # push it to ECR so that it can
-        # be deployed to ECS.
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f ./django/build-process/docker-backend-django/Dockerfile .
+        
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f ./django/build-process/docker-backend-django/Dockerfile . 
+        
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
 
+
   deploy:
-    name: Deploy
+    name: Deploy to ECS
     runs-on: ubuntu-latest
-  
     needs: build-and-push
-  
+
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-  
-      - name: Deploy Amazon ECS task definition
-        id: deploy
-        run: |
-          # Update ECS Service with the new task definition
-          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition $NEW_TASK_DEFINITION --force-new-deployment
-  
-      - name: Wait for deployment to stabilize
-        id: wait
-        run: |
-          # Wait for the deployment to stabilize
-          STATUS=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].deployments[0].rolloutState' --output text)
-          while [[ $STATUS != "COMPLETED" && $STATUS != "FAILED" ]]; do
-            echo "Waiting for deployment to stabilize..."
-            sleep 30
-            STATUS=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].deployments[0].rolloutState' --output text)
-          done
-          echo "Deployment status: $STATUS"
-          echo "::set-output name=status::$STATUS"
-  
-      - name: Rollback if deployment failed
-        if: steps.wait.outputs.status == 'FAILED'
-        run: |
-          # Rollback to the previous task definition
-          PREV_TASK_DEFINITION=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].deployments[1].taskDefinition' --output text)
-          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --task-definition $PREV_TASK_DEFINITION --force-new-deployment
-          echo "Rollback to previous task definition ($PREV_TASK_DEFINITION) initiated."
-  
-      - name: Notify on rollback
-        if: steps.wait.outputs.status == 'FAILED'
-        run: |
-          echo "Deployment failed. Rollback has been initiated. Please check ECS for further details."
-  
-  
-      - name: Deploy Amazon ECS task definition
-        run: 
-          aws ecs update-service --cluster $ECS_CLUSTER --no-paginate --service $ECS_SERVICE --force-new-deployment
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Download Existing ECS Task Definition
+      id: get-task-def
+      run: |
+        aws ecs describe-task-definition --task-definition "djano-task" --query taskDefinition > task-definition.json
+
+    - name: Update ECS Task Definition with New Image
+      id: update-task-def
+      run: |
+        IMAGE_URI="${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}"
+            
+        jq --arg IMAGE_URI "$IMAGE_URI" '
+        del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy) |
+        .containerDefinitions[0].image = $IMAGE_URI
+        ' task-definition.json > task-def-updated.json
+            
+        aws ecs register-task-definition --cli-input-json file://task-def-updated.json > new-task-def.json
+            
+        TASK_REVISION=$(jq -r '.taskDefinition.taskDefinitionArn' new-task-def.json)
+        echo "TASK_REVISION=$TASK_REVISION" >> $GITHUB_ENV
+
+    - name: Deploy New Task Definition to ECS
+      run: |
+        aws ecs update-service --cluster ${{ secrets.ECS_CLUSTER }} --service ${{ secrets.ECS_SERVICE }} --task-definition $TASK_REVISION --force-new-deployment
