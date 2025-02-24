@@ -20,6 +20,7 @@ Special thanks to codewithmuh for creating this incredible Django Starter Kit an
 
 ## Acknowledgements
 2 ECS server cicd test 
+test fail
 
 
 
