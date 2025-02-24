@@ -18,5 +18,8 @@ This project is licensed under MIT License, granting you the freedom to use, mod
 ## Acknowledgements
 Special thanks to codewithmuh for creating this incredible Django Starter Kit and simplifying the development process.
 
+## Acknowledgements
+2 ECS server cicd test 
+
 
 
