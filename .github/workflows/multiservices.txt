@@ -1,0 +1,85 @@
+name: Deploy to Amazon ECS Fargate
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+env:
+  ECR_REGISTRY: 777133917064.dkr.ecr.us-east-1.amazonaws.com
+  ECR_REPOSITORY: django-app
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set Environment Variables Based on Branch
+      run: |
+        if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          echo "IMAGE_TAG=latest" >> $GITHUB_ENV
+          echo "ECS_SERVICE=django-svc-prod" >> $GITHUB_ENV
+          echo "ECS_CLUSTER=prod-cluster" >> $GITHUB_ENV
+        elif [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
+          echo "IMAGE_TAG=dev" >> $GITHUB_ENV
+          echo "ECS_SERVICE=django-svc-dev" >> $GITHUB_ENV
+          echo "ECS_CLUSTER=dev-cluster" >> $GITHUB_ENV
+        fi
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build, Tag, and Push Docker Image
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f ./django/build-process/docker-backend-django/Dockerfile .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+
+  deploy:
+    name: Deploy to ECS
+    runs-on: ubuntu-latest
+    needs: build-and-push
+
+    steps:
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Download Existing ECS Task Definition
+      run: |
+        aws ecs describe-task-definition --task-definition "${{ env.ECS_SERVICE }}" --query taskDefinition > task-definition.json
+
+    - name: Update ECS Task Definition with New Image
+      run: |
+        jq --arg IMAGE_URI "${{ env.IMAGE_URI }}" '
+        del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy) |
+        .containerDefinitions[0].image = $IMAGE_URI
+        ' task-definition.json > task-def-updated.json
+
+        aws ecs register-task-definition --cli-input-json file://task-def-updated.json > new-task-def.json
+
+        TASK_REVISION=$(jq -r '.taskDefinition.taskDefinitionArn' new-task-def.json)
+        echo "TASK_REVISION=$TASK_REVISION" >> $GITHUB_ENV
+
+    - name: Deploy New Task Definition to ECS Service
+      run: |
+        aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.ECS_SERVICE }} --task-definition $TASK_REVISION --force-new-deployment
