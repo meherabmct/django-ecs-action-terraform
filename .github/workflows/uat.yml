@@ -44,14 +44,11 @@ jobs:
       id: build-image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: dev
-      run:
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
         # Build a docker container and
-        
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f ./django/build-process/docker-backend-django/Dockerfile . 
-        
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
 
 
@@ -91,3 +88,5 @@ jobs:
     - name: Deploy New Task Definition to ECS
       run: |
         aws ecs update-service --cluster ${{ secrets.ECS_CLUSTER }} --service ${{ secrets.ECS_SERVICE }} --task-definition $TASK_REVISION --force-new-deployment
+
+   
