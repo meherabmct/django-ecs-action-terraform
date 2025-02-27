@@ -27,14 +27,6 @@ jobs:
     # environment: production
 
     steps:
-
-    - name: Notify Deployement Start
-      run: |
-        aws sns publish --topic-arn ${{secrets.SNS_TOPIC_ARN}} \
-        --message "Build CICD Start for Django Project" \
-        --subject "Deployment App Started" \
-        --region us-east-1
-
     - name: Checkout
       uses: actions/checkout@v4
 
@@ -44,6 +36,13 @@ jobs:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Notify Deployement Start
+      run: |
+          aws sns publish --topic-arn ${{secrets.SNS_TOPIC_ARN}} \
+          --message "Build CICD Start for Django Project" \
+          --subject "Deployment App Started" \
+          --region us-east-1
 
     - name: Login to Amazon ECR
       id: login-ecr
