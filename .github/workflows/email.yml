@@ -98,3 +98,18 @@ jobs:
         aws ecs update-service --cluster ${{ secrets.ECS_CLUSTER }} --service ${{ secrets.ECS_SERVICE }} --task-definition $TASK_REVISION --force-new-deployment
 
    
+    - name: ✅ Notify Deployment Success (SNS)
+      if: success()
+      run: |
+        aws sns publish --topic-arn ${{ secrets.SNS_TOPIC_ARN }} \
+        --message "✅ Deployment of Django application on AWS ECS Fargate was successful!" \
+        --subject "Django App Deployment Successful" \
+        --region us-east-1
+
+    - name: ❌ Notify Deployment Failure (SNS)
+      if: failure()
+      run: |
+        aws sns publish --topic-arn ${{ secrets.SNS_TOPIC_ARN }} \
+        --message "❌ Deployment of Django application on AWS ECS Fargate failed. Please check logs." \
+        --subject "Django App Deployment Failed" \
+        --region us-east-1
