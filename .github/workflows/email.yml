@@ -1,0 +1,101 @@
+name: Deploy to Amazon ECS Fargate
+
+on:
+  push:
+    branches:
+      - uat
+
+
+env:
+  #AWS_REGION: us-east-1     
+  ECR_REGISTRY: 777133917064.dkr.ecr.us-east-1.amazonaws.com            # set this to your preferred AWS region, e.g. us-west-1
+  ECR_REPOSITORY: django-app           # set this to your Amazon ECR repository name
+  #ECS_SERVICE: django-svc               # set this to your Amazon ECS service name
+  #ECS_CLUSTER: RnD                 # set this to your Amazon ECS cluster name
+  #ECS_TASK_DEFINITION: djano-task # set this to the path to your Amazon ECS task definition
+                                               # file, e.g. .aws/task-definition.json
+  #CONTAINER_NAME: django-app          # set this to the name of the container in the
+                                               # containerDefinitions section of your task definition
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-push:
+    name: Build and Push
+    runs-on: ubuntu-latest
+    # environment: production
+
+    steps:
+
+    - name: Notify Deployement Start
+      run: |
+        aws sns publish --topic-arn ${{secrets.SNS_TOPIC_ARN}} \
+        --message "Build CICD Start for Django Project" \
+        --subject "Deployment App Started" \
+        --region us-east-1
+
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build, tag, and push image to Amazon ECR
+      id: build-image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        # Build a docker container 
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f ./django/build-process/docker-backend-django/Dockerfile . 
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+
+
+  deploy:
+    name: Deploy to ECS
+    runs-on: ubuntu-latest
+    needs: build-and-push
+
+    steps:
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Download Existing ECS Task Definition
+      id: get-task-def
+      run: |
+        aws ecs describe-task-definition --task-definition "djano-task" --query taskDefinition > task-definition.json
+
+    - name: Update ECS Task Definition with New Image
+      id: update-task-def
+      run: |
+        IMAGE_URI="${{ secrets.ECR_REGISTRY }}/${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}"
+            
+        jq --arg IMAGE_URI "$IMAGE_URI" '
+        del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy) |
+        .containerDefinitions[0].image = $IMAGE_URI
+        ' task-definition.json > task-def-updated.json
+            
+        aws ecs register-task-definition --cli-input-json file://task-def-updated.json > new-task-def.json
+            
+        TASK_REVISION=$(jq -r '.taskDefinition.taskDefinitionArn' new-task-def.json)
+        echo "TASK_REVISION=$TASK_REVISION" >> $GITHUB_ENV
+
+    - name: Deploy New Task Definition to ECS
+      run: |
+        aws ecs update-service --cluster ${{ secrets.ECS_CLUSTER }} --service ${{ secrets.ECS_SERVICE }} --task-definition $TASK_REVISION --force-new-deployment
+
+   
